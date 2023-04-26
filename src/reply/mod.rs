@@ -9,9 +9,9 @@ use aho_corasick::AhoCorasick;
 use std::collections::HashMap;
 
 pub struct ACStrategy {
-    ac_automaton: AhoCorasick,
-    patterns: Vec<String>,
-    pattern_reply_map: HashMap<String, Vec<ReplyType>>,
+    pub ac_automaton: AhoCorasick,
+    pub patterns: Vec<String>,
+    pub pattern_reply_map: HashMap<String, Vec<ReplyType>>,
 }
 
 use crate::config::ReplyConfigEntry;

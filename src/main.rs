@@ -1,13 +1,8 @@
 use clap::Parser;
 use config::ReplyConfigEntry;
-use matrix_sdk::{
-    self,
-    config::SyncSettings,
-    ruma::OwnedRoomId,
-    Client,
-};
+use matrix_sdk::{self, config::SyncSettings, ruma::OwnedRoomId, Client};
 use serde_json;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use url::Url;
 
 mod config;
@@ -34,8 +29,19 @@ async fn main() -> anyhow::Result<()> {
 
     let username = args.username;
     let password = args.password;
+    let delay = args.delay;
+    let cache_file = args.cache_file;
 
-    login_and_process_messages(homeserver_url, username, password, config_path, room_ids).await?;
+    login_and_process_messages(
+        homeserver_url,
+        username,
+        password,
+        config_path,
+        room_ids,
+        delay,
+        cache_file,
+    )
+    .await?;
 
     Ok(())
 }
@@ -46,6 +52,8 @@ async fn login_and_process_messages(
     password: String,
     config_path: Vec<String>,
     room_ids: Vec<OwnedRoomId>,
+    delay: u64,
+    cache_file: Option<String>,
 ) -> anyhow::Result<()> {
     let homeserver_url = Url::parse(&homeserver_url)?;
     let client = Client::new(homeserver_url).await?;
@@ -58,7 +66,8 @@ async fn login_and_process_messages(
         let reply_configs: Vec<ReplyConfigEntry> = serde_json::from_reader(reader)?;
         cs.extend(reply_configs.into_iter());
     }
-    let reply_strategy = Arc::new(ACStrategy::new(cs));
+    // let reply_strategy = Arc::new(ACStrategy::new(cs));
+    let reply_strategy = Arc::new(RwLock::new(ACStrategy::new(cs)));
 
     client
         .login_username(&username, &password)
@@ -76,6 +85,9 @@ async fn login_and_process_messages(
 
     // auto join handler
     client.add_event_handler(handler::auto_join_handler);
+
+    // auto append handler
+    handler::add_auto_append_handle(&client, reply_strategy, delay, cache_file);
 
     client.sync(SyncSettings::new()).await?;
     Ok(())

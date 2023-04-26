@@ -1,19 +1,23 @@
 use matrix_sdk::{
     room::Room,
     ruma::{
-        events::room::message::{
-            MessageType, OriginalSyncRoomMessageEvent, RoomMessageEventContent
-        },
         events::room::member::StrippedRoomMemberEvent,
+        events::room::message::{
+            MessageType, OriginalSyncRoomMessageEvent, RoomMessageEventContent,
+        },
         RoomId,
     },
     Client,
 };
+use serde_json::json;
+use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 use crate::reply::{ACStrategy, ReplyType};
 use rand;
-use std::sync::Arc;
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+use std::sync::{Arc, RwLock};
 
 macro_rules! BASE_REPLY {
     ($name:ident) => {
@@ -29,7 +33,10 @@ macro_rules! BASE_REPLY {
                     return;
                 }
 
-                let replies = reply_strategy.find_reply(&text_content.body);
+                let replies = reply_strategy
+                    .read()
+                    .unwrap()
+                    .find_reply(&text_content.body);
 
                 let replies: Vec<String> = replies
                     .into_iter()
@@ -59,7 +66,7 @@ macro_rules! BASE_REPLY {
 
 pub fn add_auto_reply_handler(
     client: &Client,
-    reply_strategy: Arc<ACStrategy>,
+    reply_strategy: Arc<RwLock<ACStrategy>>,
     room_id: Option<&RoomId>,
 ) {
     if let Some(room_id) = room_id {
@@ -69,12 +76,7 @@ pub fn add_auto_reply_handler(
     }
 }
 
-
-pub async fn auto_join_handler(
-    room_member: StrippedRoomMemberEvent,
-    client: Client,
-    room: Room,
-) {
+pub async fn auto_join_handler(room_member: StrippedRoomMemberEvent, client: Client, room: Room) {
     if room_member.state_key != client.user_id().unwrap() {
         return;
     }
@@ -88,7 +90,10 @@ pub async fn auto_join_handler(
                 // retry autojoin due to synapse sending invites, before the
                 // invited user can join for more information see
                 // https://github.com/matrix-org/synapse/issues/4345
-                eprintln!("Failed to join room {} ({err:?}), retrying in {delay}s", room.room_id());
+                eprintln!(
+                    "Failed to join room {} ({err:?}), retrying in {delay}s",
+                    room.room_id()
+                );
 
                 sleep(Duration::from_secs(delay)).await;
                 delay *= 2;
@@ -101,4 +106,103 @@ pub async fn auto_join_handler(
             println!("Successfully joined room {}", room.room_id());
         });
     }
+}
+
+#[derive(Debug)]
+struct EntryUpdate {
+    pub pattern: String,
+    pub reply: String,
+}
+
+pub fn add_auto_append_handle(
+    client: &Client,
+    reply_strategy: Arc<RwLock<ACStrategy>>,
+    delay: u64,
+    cache_file: Option<String>,
+) {
+    let (mut tx, mut rx) = mpsc::channel::<EntryUpdate>(256);
+
+    {
+        let reply_strategy = reply_strategy.clone();
+
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(delay)).await;
+
+                let mut new_patterns = vec![];
+                let mut new_replies = vec![];
+                {
+                    let mut append_file = cache_file.clone().and_then(|f| {
+                        Some(
+                            OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .append(true)
+                                .open(&f)
+                                .unwrap(),
+                        )
+                    });
+
+                    while let Ok(EntryUpdate { pattern, reply }) = rx.try_recv() {
+                        append_file.as_mut().and_then(|f| {
+                            writeln!(
+                                *f,
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "pattern": pattern,
+                                    "reply": reply,
+                                }))
+                                .unwrap()
+                            )
+                            .unwrap();
+                            Option::<()>::None
+                        });
+
+                        new_patterns.push(pattern);
+                        new_replies.push(reply);
+                    }
+                }
+
+                if new_patterns.len() > 0 && new_replies.len() > 0 {
+                    let mut mut_ref = reply_strategy.write().unwrap();
+                    mut_ref.patterns.extend_from_slice(&new_patterns);
+                    mut_ref.ac_automaton =
+                        aho_corasick::AhoCorasick::new(mut_ref.patterns.clone()).unwrap();
+
+                    new_patterns
+                        .into_iter()
+                        .zip(new_replies.into_iter().map(ReplyType::PlainMessage))
+                        .for_each(|(p, r)| {
+                            mut_ref
+                                .pattern_reply_map
+                                .entry(p)
+                                .and_modify(|replies| replies.push(r.clone()))
+                                .or_insert_with(|| vec![r.clone()]);
+                        })
+                }
+            }
+        });
+    }
+
+    client.add_event_handler(move |event: OriginalSyncRoomMessageEvent| {
+        let tx = tx.clone();
+
+        async move {
+            let MessageType::Text(text_content) = &event.content.msgtype else { return; };
+
+            if text_content.body.starts_with("/append ") {
+                let s: String = text_content.body.chars().skip(8).collect();
+                let arr: Vec<&str> = s.splitn(2, " ").collect();
+
+                if arr.len() == 2 {
+                    tx.send(EntryUpdate {
+                        pattern: arr[0].to_owned(),
+                        reply: arr[1].to_owned(),
+                    })
+                    .await
+                    .unwrap();
+                }
+            }
+        }
+    });
 }
