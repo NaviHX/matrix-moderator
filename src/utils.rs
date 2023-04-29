@@ -27,6 +27,9 @@ pub struct Args {
     pub allow_users: Option<Vec<String>>,
 
     #[arg(long)]
-    pub censor_room: Option<String>,
+    pub vote_room: Option<String>,
+
+    #[arg(long, default_value_t = 600)]
+    pub vote_delay: u64,
 }
 
