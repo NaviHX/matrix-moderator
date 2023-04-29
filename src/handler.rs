@@ -41,11 +41,11 @@ macro_rules! BASE_REPLY {
 
                 let replies: Vec<String> = replies
                     .into_iter()
-                    .filter(|r| {
-                        // filter non-text reply
-                        // HACK always true because it has only one enum member
-                        true
-                    })
+                    // .filter(|r| {
+                    //     // filter non-text reply
+                    //     // HACK always true because it has only one enum member
+                    //     true
+                    // })
                     .map(|r| match r {
                         ReplyType::PlainMessage(r) => r,
                     })
@@ -122,7 +122,7 @@ pub fn add_auto_append_handle(
     cache_file: Option<String>,
     allow_users: Option<Vec<OwnedUserId>>,
 ) {
-    let (mut tx, mut rx) = mpsc::channel::<EntryUpdate>(256);
+    let (tx, mut rx) = mpsc::channel::<EntryUpdate>(256);
 
     {
         let reply_strategy = reply_strategy.clone();
