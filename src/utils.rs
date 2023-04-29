@@ -25,5 +25,8 @@ pub struct Args {
 
     #[arg(short, long)]
     pub allow_users: Option<Vec<String>>,
+
+    #[arg(long)]
+    pub censor_room: Option<String>,
 }
 

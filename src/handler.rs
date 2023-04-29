@@ -5,7 +5,7 @@ use matrix_sdk::{
         events::room::message::{
             MessageType, OriginalSyncRoomMessageEvent, RoomMessageEventContent,
         },
-        OwnedUserId, RoomId,
+        OwnedRoomId, OwnedUserId, RoomId,
     },
     Client,
 };
@@ -121,6 +121,7 @@ pub fn add_auto_append_handle(
     delay: u64,
     cache_file: Option<String>,
     allow_users: Option<Vec<OwnedUserId>>,
+    censor_room: Option<OwnedRoomId>,
 ) {
     let (tx, mut rx) = mpsc::channel::<EntryUpdate>(256);
 
@@ -193,25 +194,35 @@ pub fn add_auto_append_handle(
     };
     let userid_set = Arc::new(userid_set);
 
-    client.add_event_handler(move |event: OriginalSyncRoomMessageEvent| {
+    client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, client: Client| {
         let tx = tx.clone();
         let userid_set = userid_set.clone();
+        let censor_room = censor_room.clone();
 
         async move {
             let MessageType::Text(text_content) = &event.content.msgtype else { return; };
             let sender_id = &event.sender.clone();
 
-            if (userid_set.is_empty() || userid_set.get(sender_id).is_some()) && text_content.body.starts_with("/append ") {
-                let s: String = text_content.body.chars().skip(8).collect();
-                let arr: Vec<&str> = s.splitn(2, " ").collect();
+            if text_content.body.starts_with("/append ") {
+                if userid_set.is_empty() || userid_set.get(sender_id).is_some() {
+                    let s: String = text_content.body.chars().skip(8).collect();
+                    let arr: Vec<&str> = s.splitn(2, " ").collect();
 
-                if arr.len() == 2 {
-                    tx.send(EntryUpdate {
-                        pattern: arr[0].to_owned(),
-                        reply: arr[1].to_owned(),
-                    })
-                    .await
-                    .unwrap();
+                    if arr.len() == 2 {
+                        tx.send(EntryUpdate {
+                            pattern: arr[0].to_owned(),
+                            reply: arr[1].to_owned(),
+                        })
+                        .await
+                        .unwrap();
+                    }
+                } else {
+                    if let Some(roomid) = censor_room {
+                        if let Some(Room::Joined(room)) = client.get_room(&roomid) {
+                            let message = RoomMessageEventContent::text_plain(format!("Sender: {}\n{}", sender_id, text_content.body));
+                            room.send(message, None).await.unwrap();
+                        }
+                    }
                 }
             }
         }

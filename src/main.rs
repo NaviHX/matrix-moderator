@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let delay = args.delay;
     let cache_file = args.cache_file;
     let allow_users = args.allow_users;
+    let censor_room = args.censor_room;
 
     login_and_process_messages(
         homeserver_url,
@@ -50,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
         delay,
         cache_file,
         allow_users,
+        censor_room,
     )
     .await?;
 
@@ -65,6 +67,7 @@ async fn login_and_process_messages(
     delay: u64,
     cache_file: Option<String>,
     allow_users: Option<Vec<String>>,
+    censor_room: Option<String>,
 ) -> anyhow::Result<()> {
     let homeserver_url = Url::parse(&homeserver_url)?;
     let client = Client::new(homeserver_url).await?;
@@ -105,7 +108,8 @@ async fn login_and_process_messages(
                 .collect(),
         )
     });
-    handler::add_auto_append_handle(&client, reply_strategy, delay, cache_file, allow_users);
+    let censor_room = censor_room.and_then(|r| Some(OwnedRoomId::from_str(&r).unwrap()));
+    handler::add_auto_append_handle(&client, reply_strategy, delay, cache_file, allow_users, censor_room);
 
     client.sync(SyncSettings::new()).await?;
     Ok(())
