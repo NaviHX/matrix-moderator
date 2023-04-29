@@ -22,5 +22,8 @@ pub struct Args {
 
     #[arg(long)]
     pub cache_file: Option<String>,
+
+    #[arg(short, long)]
+    pub allow_users: Option<Vec<String>>,
 }
 

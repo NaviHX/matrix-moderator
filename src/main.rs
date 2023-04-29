@@ -1,8 +1,16 @@
 use clap::Parser;
 use config::ReplyConfigEntry;
-use matrix_sdk::{self, config::SyncSettings, ruma::OwnedRoomId, Client};
+use matrix_sdk::{
+    self,
+    config::SyncSettings,
+    ruma::{OwnedRoomId, OwnedUserId},
+    Client,
+};
 use serde_json;
-use std::sync::{Arc, RwLock};
+use std::{
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
 use url::Url;
 
 mod config;
@@ -31,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     let password = args.password;
     let delay = args.delay;
     let cache_file = args.cache_file;
+    let allow_users = args.allow_users;
 
     login_and_process_messages(
         homeserver_url,
@@ -40,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         room_ids,
         delay,
         cache_file,
+        allow_users,
     )
     .await?;
 
@@ -54,6 +64,7 @@ async fn login_and_process_messages(
     room_ids: Vec<OwnedRoomId>,
     delay: u64,
     cache_file: Option<String>,
+    allow_users: Option<Vec<String>>,
 ) -> anyhow::Result<()> {
     let homeserver_url = Url::parse(&homeserver_url)?;
     let client = Client::new(homeserver_url).await?;
@@ -87,7 +98,14 @@ async fn login_and_process_messages(
     client.add_event_handler(handler::auto_join_handler);
 
     // auto append handler
-    handler::add_auto_append_handle(&client, reply_strategy, delay, cache_file);
+    let allow_users = allow_users.and_then(|v| {
+        Some(
+            v.into_iter()
+                .map(|id| OwnedUserId::from_str(&id).unwrap())
+                .collect(),
+        )
+    });
+    handler::add_auto_append_handle(&client, reply_strategy, delay, cache_file, allow_users);
 
     client.sync(SyncSettings::new()).await?;
     Ok(())

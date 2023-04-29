@@ -5,7 +5,7 @@ use matrix_sdk::{
         events::room::message::{
             MessageType, OriginalSyncRoomMessageEvent, RoomMessageEventContent,
         },
-        RoomId,
+        OwnedUserId, RoomId,
     },
     Client,
 };
@@ -15,6 +15,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::reply::{ACStrategy, ReplyType};
 use rand;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::sync::{Arc, RwLock};
@@ -119,6 +120,7 @@ pub fn add_auto_append_handle(
     reply_strategy: Arc<RwLock<ACStrategy>>,
     delay: u64,
     cache_file: Option<String>,
+    allow_users: Option<Vec<OwnedUserId>>,
 ) {
     let (mut tx, mut rx) = mpsc::channel::<EntryUpdate>(256);
 
@@ -184,13 +186,22 @@ pub fn add_auto_append_handle(
         });
     }
 
+    let userid_set = if let Some(users) = allow_users {
+        users.into_iter().collect::<HashSet<_>>()
+    } else {
+        HashSet::new()
+    };
+    let userid_set = Arc::new(userid_set);
+
     client.add_event_handler(move |event: OriginalSyncRoomMessageEvent| {
         let tx = tx.clone();
+        let userid_set = userid_set.clone();
 
         async move {
             let MessageType::Text(text_content) = &event.content.msgtype else { return; };
+            let sender_id = &event.sender.clone();
 
-            if text_content.body.starts_with("/append ") {
+            if (userid_set.is_empty() || userid_set.get(sender_id).is_some()) && text_content.body.starts_with("/append ") {
                 let s: String = text_content.body.chars().skip(8).collect();
                 let arr: Vec<&str> = s.splitn(2, " ").collect();
 
